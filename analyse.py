@@ -27,12 +27,21 @@ import urllib
 import codecs
 import cgi
 import ast
+import sys
 import os
 
 # NLTK, see http://www.nltk.org/getting-started for details.
 # won't work without nltk's downloads.
 
 import nltk
+import calendar
+import locale
+from lxml import etree
+
+locale.setlocale(locale.LC_ALL, ('nl_NL', 'utf8@euro'))
+
+month_names = []
+for i in range(1,12): month_names.append(calendar.month_name[i])
 
 from django.utils.html import strip_tags
 from pprint import pprint
@@ -45,23 +54,15 @@ class Analyze(object):
         url = form.getvalue("url")
 
         print "Content-Type: text/xml;charset=UTF-8; \n\n"
-        print('<TPTAResponse version="TPTA nltk">')
-        print('<entities>')
 
         i = 0
         error = False
 
         if url:
-            try:
-                data = strip_tags(urllib.urlopen(url).read()).encode('ascii', 'xmlcharrefreplace').replace(':' ,' ').replace(';', ' ')
-            except:
-                error = True
+            data = strip_tags(urllib.urlopen(url).read()).encode('utf-8').replace(':' ,' ').replace(';', ' ')
         elif text:
-            try:
-                data = strip_tags(text).encode('ascii', 'xmlcharrefreplace').replace(':' ,' ').replace(';', ' ')
-                url = True
-            except:
-                error = True
+            data = strip_tags(text).encode('utf-8').replace(':' ,'.').replace(';', '.')
+            url = True
 
         if not error:
             from nltk.tokenize import word_tokenize
@@ -69,34 +70,51 @@ class Analyze(object):
             from nltk.corpus import stopwords
             from nltk.stem import PorterStemmer
 
+            doc = etree.Element('TPTAResponse')
+            docs = etree.SubElement(doc, 'entities')
+
             stopwoorden = set(stopwords.words('dutch'))
 
             for j in ["de","het","het", "dit", "wel", "bron", "datum tijd onderwerp", "datum", "tijd", "onderwerp", "bron regels"]: 
                 stopwoorden.add(j)
 
             for line in data.split('.'):
-                if len(line.strip()) > 0:
+                if len(line.strip()) > 2:
                     words = nltk.ne_chunk(pos_tag(word_tokenize(line)))
                     known = {}
+
                     for word in words:
                         if type(word) == nltk.tree.Tree:
-                            prefix=u"<misc>"
-                            suffix=u"</misc>"
                             if str(word).find('PERSON') > -1:
-                                prefix=u"<person>"
-                                suffix=u"</person>"
-                            word = u" ".join(i[0] for i in word.leaves()).strip()
-                            nword = u""
+                                prefix="person"
+                            elif str(word).find('ORGANIZATION') > -1:
+                                person="organization"
+                            else:
+                                prefix = "misc"
+                            word = unicode(" ").join(i[0] for i in word.leaves()).strip().encode('utf-8')
+                            nword = None
+
                             for item in line[line.find(word):].split(' '):
-                                if len(item.strip()) > 0:
-                                    if item[0].isupper():
-                                        nword += item.replace(',',' ').replace('De','')+" "
+                                if len(item) > 1:
+                                    if nword == None:
+                                        nword = unicode(item.decode('utf-8'))
                                     else:
-                                        break
-                            if len(nword.strip()) > 0 and not nword.strip() in known and not nword.strip().lower() in stopwoorden:
-                                known[nword.strip()] = True
-                                print(prefix+nword.strip()+suffix)
-                                i+=1
+                                        if item[0].isupper():
+                                            nword += unicode(" " +item.decode('utf-8'))
+                                        else:
+                                            break
+
+                            if not nword == None:
+                                nword=nword.strip()
+                                if nword.endswith(',') or nword.endswith(')') or nword.endswith('"'):
+                                    nword=nword[:-1]
+                                
+                                nword=nword.strip()
+                                if len(nword) > 0 and not nword in known and not nword.strip().lower() in stopwoorden and not nword.lower() in month_names:
+                                    known[nword.strip()] = True
+                                    text = etree.SubElement(doc, prefix)
+                                    text.text = nword
+                                    i+=1
 
         if not url:
             if not error:
@@ -105,9 +123,9 @@ class Analyze(object):
                 print("<error>could not open requested url</error>")
         elif i == 0:
             print("<error>noentityfound</error>")
-
-        print("</entities>")
-        print("</TPTAResponse>")
+        else:
+            print(etree.tostring(doc))
+        #print("<data>"+data.encode('ascii', 'xmlcharrefreplace')+"</data>")
     
 
 if __name__ == "__main__":
